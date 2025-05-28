@@ -2,7 +2,6 @@
 .env
 credentials.json
 .venv
-config
 output
 token.json
 src/__pycache__/
