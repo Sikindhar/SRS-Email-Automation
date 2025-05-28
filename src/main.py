@@ -1,61 +1,75 @@
 import os
+import logging
 from dotenv import load_dotenv
 from email_handler import EmailHandler
 from ai_processor import AIProcessor
-from document_generator import DocumentGenerator
-from time import sleep
+from db_utils import MongoDB
+import asyncio
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 load_dotenv()
 
-def process_sample_email():
-    """Test function to process a sample email"""
-    sample_email = {
-        'sender': 'spatibandla10@gmail.com',
-        'subject': 'New Object in salesforce',
-        'body': '''How to create a new object in salesforce and add the validation and phone number fields as per IST format:''',
-        'date': '2024-05-20'
-    }
-    return sample_email
+class EmailMonitor:
+    def __init__(self):
+        self.email_handler = EmailHandler()
+        self.ai_processor = AIProcessor()
+        self.db = MongoDB()
+        logger.info("Email Monitor initialized successfully")
 
-def main(test_mode=True):
-    email_handler = EmailHandler()
-    ai_processor = AIProcessor()
-    doc_generator = DocumentGenerator()
-    
-    def process_request(email_content):
+    async def process_request(self, email_content):
+        """Process incoming email request"""
         try:
-            print(f"Processing request from: {email_content['sender']}")
-        
-            requirements = ai_processor.generate_requirements(email_content)
-        
-            if requirements:
-                docs = doc_generator.create_documents(requirements, email_content)
-                
-                if docs:
-                    email_handler.send_response(docs, email_content['sender'])
-                    print(f"Processed request from {email_content['sender']}")
-                    print(f"Document saved to: {docs['file_path']}")
-                else:
-                    print("Failed to generate document")
+            logger.info(f"Processing request from: {email_content['sender']}")
+            
+            sender_email = email_content['sender'].split('<')[-1].replace('>', '')
+            if not self.db.is_email_approved(sender_email):
+                logger.warning(f"Rejected unauthorized sender: {sender_email}")
+                return False
+            
+            result = self.ai_processor.generate_requirements(email_content)
+            
+            if result:
+                self.email_handler.send_response(result, email_content['sender'])
+                logger.info(f"Processed request from {email_content['sender']}")
+                logger.info(f"Document sent: {result['filename']}")
+                return True
             else:
-                print("Failed to generate requirements")
+                logger.error("Failed to generate requirements")
+                return False
                 
         except Exception as e:
-            print(f"Error processing request: {str(e)}")
-    
-    if test_mode:
-        print("Running in test mode...")
-        sample_email = process_sample_email()
-        process_request(sample_email)
-    else:
-        print("Starting email monitoring...")
-        email_handler.start_monitoring(process_request)
+            logger.error(f"Error processing request: {str(e)}")
+            return False
+
+    async def start_monitoring(self):
+        """Start monitoring emails"""
+        logger.info("Starting email monitoring...")
+        while True:
+            try:
+                await self.email_handler.start_monitoring(self.process_request)
+            except Exception as e:
+                logger.error(f"Monitoring error: {str(e)}")
+                await asyncio.sleep(60)  # Wait before retrying
+
+def main():
+    try:
+        logger.info("Starting Email Automation System")
+        monitor = EmailMonitor()
+        
+        asyncio.run(monitor.start_monitoring())
+        
+    except KeyboardInterrupt:
+        logger.info("Shutting down gracefully...")
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    try:
-        print("Starting Email Automation System in Real-time Mode")
-        main(test_mode=False)  
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    except Exception as e:
-        print(f"Error: {str(e)}")
+    main()
