@@ -1,6 +1,8 @@
 import os
 import base64
 import time
+import ssl
+import json
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -11,6 +13,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from datetime import datetime
+from db_utils import MongoDB
+import asyncio
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 
           'https://www.googleapis.com/auth/gmail.send',
@@ -33,40 +38,47 @@ class EmailHandler:
             raise Exception("'email' configuration missing in config.yaml")
     
     def _authenticate(self):
-        """Handle Gmail API authentication using existing token or new OAuth flow"""
+        """Handle Gmail API authentication using environment variables"""
         try:
             print("Starting authentication process...")
             
-            if os.path.exists('token.json'):
-                print("Found existing token.json, attempting to use it...")
-                self.creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            credentials_json = os.getenv('GMAIL_CREDENTIALS')
+            if not credentials_json:
+                raise ValueError("GMAIL_CREDENTIALS environment variable not set")
+            
+            credentials_info = json.loads(credentials_json)
+            
+            token_json = os.getenv('GMAIL_TOKEN')
+            if token_json:
+                print("Found token in environment, attempting to use it...")
+                self.creds = Credentials.from_authorized_user_info(
+                    json.loads(token_json), 
+                    SCOPES
+                )
                 
-                # Only refresh if token is expired
                 if self.creds and self.creds.expired and self.creds.refresh_token:
                     print("Token expired, refreshing...")
                     self.creds.refresh(Request())
-                    # Save refreshed token
-                    with open('token.json', 'w') as token:
-                        token.write(self.creds.to_json())
+                    print("Token refreshed successfully")
             else:
-                print("No token.json found, starting new authentication flow...")
-                if not os.path.exists('credentials.json'):
-                    raise FileNotFoundError("credentials.json not found")
-                
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'credentials.json', 
+                print("No token found, starting new authentication flow...")
+                flow = InstalledAppFlow.from_client_config(
+                    credentials_info, 
                     SCOPES
                 )
                 self.creds = flow.run_local_server(
                     port=8080,
                     success_message='Authentication successful! You can close this window.'
                 )
-                
-                print("Saving new token.json")
-                with open('token.json', 'w') as token:
-                    token.write(self.creds.to_json())
+                print("New token generated successfully")
 
-            self.service = build('gmail', 'v1', credentials=self.creds)
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            self.service = build('gmail', 'v1', credentials=self.creds, 
+                               cache_discovery=False,
+                               static_discovery=False)
             print("Authentication successful!")
                 
         except Exception as e:
@@ -77,16 +89,12 @@ class EmailHandler:
     def _validate_email(self, email_content):
         """Validate incoming email requests"""
         try:
-            approved_emails = [
-                'spatibandla10@gmail.com',
-                '',#wecan add others or add domain restrictions
-                'sikindharjaladi@gmail.com'
-            ]
-
+            db = MongoDB()
+            
             sender_email = email_content['sender'].split('<')[-1].replace('>', '')
             
             validations = {
-                'approved_sender': sender_email in approved_emails,
+                'approved_sender': db.is_email_approved(sender_email),
                 'has_subject': len(email_content['subject'].strip()) > 0,
                 'has_body': len(email_content['body'].strip()) > 0,
             }
@@ -123,35 +131,66 @@ class EmailHandler:
             
             Thank you for your request. Please find attached the generated requirements specification document.
             
+            The document includes:
+            • Project Overview
+            • Functional Requirements
+            • Technical Specifications
+            • Test Cases
+            • Implementation Details
+            • Timeline
+            • Cost Estimation
+            • Resources
+            
+            Notes and Considerations:
+            • This document is AI-generated and should be verified with your team for accuracy and optimization
+            • Last Updated: {current_date}
+            • Version: 1.0
+            
+            Contact Information:
+            For clarifications or modifications, please contact: siki.docs@gmail.com
+            
+            Please review the document and cross verify if any optimizations are needed.
+            
             Best regards,
             AI Requirements Generator
-            """
+            """.format(current_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            
             message.attach(MIMEText(body, 'plain'))
 
-            with open(docs['file_path'], 'rb') as f:
-                pdf = MIMEBase('application', 'octet-stream')
-                pdf.set_payload(f.read())
-                encoders.encode_base64(pdf)
+            pdf = MIMEBase('application', 'octet-stream')
+            pdf.set_payload(docs['pdf_bytes'])
+            encoders.encode_base64(pdf)
             
-            filename = os.path.basename(docs['file_path'])
             pdf.add_header(
                 'Content-Disposition',
-                f'attachment; filename="{filename}"'
+                f'attachment; filename="{docs["filename"]}"'
             )
             pdf.add_header('Content-Type', 'application/pdf')
             message.attach(pdf)
 
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
-            self.service.users().messages().send(
-                userId='me',
-                body={'raw': raw}
-            ).execute()
             
-            print(f"Successfully sent document: {filename}")
-            return True
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                try:
+                    self.service.users().messages().send(
+                        userId='me',
+                        body={'raw': raw}
+                    ).execute()
+                    print(f"Successfully sent document: {docs['filename']}")
+                    return True
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        print(f"Failed to send email after {max_retries} attempts: {str(e)}")
+                        return False
+                    print(f"Attempt {retry_count} failed, retrying... Error: {str(e)}")
+                    time.sleep(2)  
 
         except Exception as e:
-            print(f"Error sending email: {str(e)}")
+            print(f"Error preparing email: {str(e)}")
             return False
         
 
@@ -169,8 +208,6 @@ class EmailHandler:
                 rejection_reasons.append("- Missing subject")
             if not validations.get('has_body'):
                 rejection_reasons.append("- Missing body content")
-            if not validations.get('valid_request'):
-                rejection_reasons.append("- Subject must contain one of: 'requirements', 'specification', 'project', 'document'")
             
             body = f"""
             Dear Sender,
@@ -187,19 +224,31 @@ class EmailHandler:
             message.attach(MIMEText(body, 'plain'))
             
             raw = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
-            self.service.users().messages().send(
-                userId='me',
-                body={'raw': raw}
-            ).execute()
             
-            print(f"Sent rejection email to: {email_content['sender']}")
-            return True
+            max_retries = 3
+            retry_count = 0
             
+            while retry_count < max_retries:
+                try:
+                    self.service.users().messages().send(
+                        userId='me',
+                        body={'raw': raw}
+                    ).execute()
+                    print(f"Sent rejection email to: {email_content['sender']}")
+                    return True
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        print(f"Failed to send rejection email after {max_retries} attempts: {str(e)}")
+                        return False
+                    print(f"Attempt {retry_count} failed, retrying... Error: {str(e)}")
+                    time.sleep(2)  
+
         except Exception as e:
-            print(f"Error sending rejection email: {str(e)}")
+            print(f"Error preparing rejection email: {str(e)}")
             return False    
 
-    def start_monitoring(self, callback):
+    async def start_monitoring(self, callback):
         """Monitor inbox for new incoming emails only"""
         print("Starting real-time email monitoring for new messages...")
         
@@ -233,7 +282,7 @@ class EmailHandler:
                         
                         if is_valid:
                             print(f"Processing new request from: {email_content['sender']}")
-                            callback(email_content)
+                            await callback(email_content)
                         else:
                             print(f"Invalid request from: {email_content['sender']}")
                             self._send_rejection(email_content, validations)
@@ -248,13 +297,13 @@ class EmailHandler:
                         print(f"Error processing message: {str(e)}")
                         continue
                 
-                sleep_time = self.config.get('monitoring_interval', 60)
+                sleep_time = self.config.get('monitoring_interval', 30)
                 print(f"Waiting {sleep_time} seconds for new emails...")
-                time.sleep(sleep_time)
+                await asyncio.sleep(sleep_time)
                     
         except Exception as e:
             print(f"Monitoring error: {str(e)}")
-            time.sleep(self.config.get('retry_interval', 60))
+            await asyncio.sleep(self.config.get('retry_interval', 60))
 
     def _extract_email_content(self, message):
         """Extract content from Gmail message object"""
