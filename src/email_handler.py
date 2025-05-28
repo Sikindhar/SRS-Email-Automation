@@ -14,7 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime
-from db_utils import MongoDB
+from src.db_utils import MongoDB
 import asyncio
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 
