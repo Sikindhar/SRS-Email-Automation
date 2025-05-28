@@ -1,9 +1,9 @@
 import os
 import logging
 from dotenv import load_dotenv
-from email_handler import EmailHandler
-from ai_processor import AIProcessor
-from db_utils import MongoDB
+from src.email_handler import EmailHandler
+from src.ai_processor import AIProcessor
+from src.db_utils import MongoDB
 import asyncio
 from fastapi import FastAPI
 import uvicorn
