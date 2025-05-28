@@ -5,6 +5,8 @@ from email_handler import EmailHandler
 from ai_processor import AIProcessor
 from db_utils import MongoDB
 import asyncio
+from fastapi import FastAPI
+import uvicorn
 
 
 logging.basicConfig(
@@ -15,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 load_dotenv()
+
+
+app = FastAPI(title="Email SRS Automation")
 
 class EmailMonitor:
     def __init__(self):
@@ -28,6 +33,7 @@ class EmailMonitor:
         try:
             logger.info(f"Processing request from: {email_content['sender']}")
             
+            # Check if email is approved
             sender_email = email_content['sender'].split('<')[-1].replace('>', '')
             if not self.db.is_email_approved(sender_email):
                 logger.warning(f"Rejected unauthorized sender: {sender_email}")
@@ -58,18 +64,18 @@ class EmailMonitor:
                 logger.error(f"Monitoring error: {str(e)}")
                 await asyncio.sleep(60)  # Wait before retrying
 
-def main():
-    try:
-        logger.info("Starting Email Automation System")
-        monitor = EmailMonitor()
-        
-        asyncio.run(monitor.start_monitoring())
-        
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-    except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
-        raise
+monitor = EmailMonitor()
+
+@app.on_event("startup")
+async def startup_event():
+    """Start email monitoring when the application starts"""
+    asyncio.create_task(monitor.start_monitoring())
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "message": "Email monitoring service is running"}
 
 if __name__ == "__main__":
-    main()
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
