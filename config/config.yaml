@@ -1,0 +1,7 @@
+email:
+  monitoring_interval: 30  # seconds between inbox checks
+  retry_interval: 60      # seconds between retries on error
+  sender_email: "siki.docs@gmail.com"
+
+templates:
+  requirements: "templates/requirement_template.md"
