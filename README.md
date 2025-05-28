@@ -3,6 +3,7 @@
 ## Overview
 
 **SRS-Email-Automation** is an automated tool designed to monitor email inboxes, extract relevant information, and generate Software Requirement Specifications (SRS) using AI. This project streamlines the process of gathering requirements from client emails and converting them into structured SRS documents.
+The Project is now deployed as a service now
 
 ## Features
 
@@ -11,7 +12,7 @@
 - Generates SRS documents in markdown or PDF format
 - Configurable email filters and triggers
 - Logs activity and errors for auditing
-
+- The Project is now deployed as a service now
 ## Installation
 
 1. Clone the repository:
@@ -40,6 +41,7 @@ Edit the `config.yaml` file to set:
 - Add your templates:
   requirements: "templates/requirement_template.md"
 - create a .env file to add your cohere API key
+- The current version we are not using the template now, we are direclty genrating using available packages and defined format.
 
 ## Example
 
